@@ -1,0 +1,12 @@
+{
+  "cash_usdc": 342.5800000000005,
+  "up_balance": 10.0,
+  "down_balance": 0.0,
+  "realized_pnl": 146.3100000000005,
+  "fills": 986,
+  "sells": 318,
+  "maker_fills": 986,
+  "taker_fills": 0,
+  "merges": 216,
+  "markets_resolved": 23
+}

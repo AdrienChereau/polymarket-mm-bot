@@ -6,10 +6,12 @@
 //!   - `combined` → mode dev local : les deux rôles dans le même process, reliés
 //!                  par un transport loopback in-process (pour tester sur un seul Mac).
 
+mod bankroll;
 mod config;
 mod connectors;
 mod dashboard;
 mod engines;
+mod execution;
 mod inventory;
 mod roles;
 mod signal;

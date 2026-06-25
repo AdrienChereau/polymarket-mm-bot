@@ -18,9 +18,10 @@ pub struct QuoteInputs {
     pub mid: f64,            // mid du carnet Polymarket
     pub sigma: f64,          // vol annualisée (J4)
     pub t_years: f64,        // horizon restant
-    pub inventory: f64,      // position nette (en tokens, +long Up / −short)
-    pub gamma: f64,          // aversion au risque A-S
-    pub kappa: f64,          // intensité d'arrivée des ordres A-S
+    pub inventory: f64,      // position NETTE (net = up − down ; convention R1)
+    pub gamma: f64,          // aversion au risque A-S (pilote le skew d'inventaire)
+    pub kappa: f64,          // (conservé pour compat ; non utilisé depuis R2)
+    pub base_half_spread_cents: f64, // R2 : demi-spread de base (cents)
     pub tick: f64,           // pas de prix (0.01)
     pub rewards_max_spread_cents: f64, // v, en cents (ex 4.5)
     pub our_size: f64,       // taille de nos ordres (pour le score reward)
@@ -69,17 +70,22 @@ fn clamp_tick(p: f64, tick: f64) -> f64 {
 pub fn compute_quote(inp: &QuoteInputs, book: &PolyBook) -> QuoteResult {
     let var_t = inp.sigma * inp.sigma * inp.t_years;
 
-    // 1. Prix de réservation (skew d'inventaire) et demi-spread A-S.
-    let reservation = inp.fair - inp.inventory * inp.gamma * var_t;
-    let half_spread_as =
-        0.5 * inp.gamma * var_t + (1.0 / inp.gamma) * (1.0 + inp.gamma / inp.kappa).ln();
+    // 1. Prix de réservation. MM NEUTRE : on cote autour du **mid du marché**
+    //    (et non du fair — on ne parie pas sur notre modèle), décalé par le skew
+    //    d'inventaire A-S (sur l'inventaire NET, R1). +net (long Up) → réservation
+    //    sous le mid → on penche vendeur Up pour revenir à plat. Le `fair` reste
+    //    calculé pour le monitoring (divergence fair vs mid) mais ne pilote pas la quote.
+    let reservation = inp.mid - inp.inventory * inp.gamma * var_t;
 
-    // 2. Subvention reward. Note : sur un marché de probabilité, le terme A-S
-    //    (1/γ)·ln(1+γ/κ) domine et peut largement dépasser la bande de reward —
-    //    c'est précisément ce qu'on cherche à resserrer. On estime donc NOTRE score
-    //    à une position compétitive *dans la bande* (au plus la moitié de la bande),
-    //    représentant là où on coterait réellement pour capter les rewards — et non
-    //    au spread A-S brut (qui donnerait un score nul au bord de la bande).
+    // R2 : le terme d'arrivée A-S (1/γ)·ln(1+γ/κ) est mal échelonné en [0,1]
+    //   (≈0.645, toujours écrasé au plafond) → on le remplace par un demi-spread de
+    //   BASE configurable (cents), élargi marginalement par le risque (½γσ²t) et par
+    //   l'inventaire (offloader plus large quand on est chargé).
+    let base = inp.base_half_spread_cents / 100.0;
+    let inv_widen = inp.gamma * var_t * inp.inventory.abs();
+    let half_spread_as = base + 0.5 * inp.gamma * var_t + inv_widen;
+
+    // 2. Subvention reward : on estime NOTRE score à notre spread (maintenant en cents).
     let v = inp.rewards_max_spread_cents;
     let s_ref_cents = (half_spread_as * 100.0).min(v * 0.5).max(0.0);
     let our_score = reward_score(v, s_ref_cents) * inp.our_size * 2.0; // deux côtés
@@ -134,6 +140,7 @@ mod tests {
             inventory: 0.0,
             gamma: 0.1,
             kappa: 1.5,
+            base_half_spread_cents: 2.0,
             tick: 0.01,
             rewards_max_spread_cents: 4.5,
             our_size: 50.0,

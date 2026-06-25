@@ -50,8 +50,26 @@ pub struct Config {
     // Avellaneda-Stoikov + reward (J7)
     pub gamma: f64,
     pub kappa: f64,
-    pub our_size: f64,            // taille de nos ordres (tokens)
+    pub our_size: f64,            // taille de nos ordres (tokens) — legacy/test
     pub reward_pool_per_min: f64, // pool de reward estimé ($/min)
+    pub base_half_spread_cents: f64, // R2 : demi-spread de base (remplace le terme A-S mal échelonné)
+
+    // Bankroll / gates (R4)
+    pub bankroll_fraction: f64,    // max % equity par ordre
+    pub max_net_exposure_pct: f64, // plafond |net|·mid vs equity
+    pub min_cash_reserve_pct: f64, // cash minimum
+    pub max_window_loss_pct: f64,  // stop si window_pnl/window_start < -X
+    pub max_order_size: f64,       // plafond absolu tokens/ordre
+    pub max_position: f64,         // plafond absolu de position par côté
+    pub paired_buy_margin: f64,    // achat pairé si up_ask+down_ask < 1 - margin
+
+    // Exécution maker (R3)
+    pub maker_fill_prob: f64, // proba de fill maker par tick
+    pub maker_only: bool,     // true = pas de fills taker
+
+    // KILL / panic stop (R5)
+    pub kill_pause_secs: i64,
+    pub panic_stop_secs: i64,
 
     // Paper / inventaire (J8)
     pub start_cash: f64,
@@ -99,12 +117,29 @@ impl Config {
             obi_threshold: env_or("OBI_THRESHOLD", 0.85),
             velocity_threshold: env_or("VELOCITY_THRESHOLD", 5.0),
 
-            volatility_floor: env_or("VOLATILITY_FLOOR", 0.40),
+            // R1 (truth protocol) : floor MONTÉ — un σ plus élevé rapproche le fair du mid.
+            volatility_floor: env_or("VOLATILITY_FLOOR", 0.80),
 
             gamma: env_or("AS_GAMMA", 0.1),
             kappa: env_or("AS_KAPPA", 1.5),
             our_size: env_or("OUR_SIZE", 50.0),
             reward_pool_per_min: env_or("REWARD_POOL_PER_MIN", 1.0),
+            // 0.5¢ → quotes au touch (marchés ~1-2¢ de spread). Calibrable.
+            base_half_spread_cents: env_or("BASE_HALF_SPREAD_CENTS", 0.5),
+
+            bankroll_fraction: env_or("BANKROLL_FRACTION", 0.02),
+            max_net_exposure_pct: env_or("MAX_NET_EXPOSURE_PCT", 0.15),
+            min_cash_reserve_pct: env_or("MIN_CASH_RESERVE_PCT", 0.25),
+            max_window_loss_pct: env_or("MAX_WINDOW_LOSS_PCT", 0.10),
+            max_order_size: env_or("MAX_ORDER_SIZE", 100.0),
+            max_position: env_or("MAX_POSITION", 500.0),
+            paired_buy_margin: env_or("PAIRED_BUY_MARGIN", 0.01),
+
+            maker_fill_prob: env_or("MAKER_FILL_PROB", 0.2),
+            maker_only: env_or("MAKER_ONLY", true),
+
+            kill_pause_secs: env_or("KILL_PAUSE_SECS", 5),
+            panic_stop_secs: env_or("PANIC_STOP_SECS", 30),
 
             start_cash: env_or("START_CASH", 100.0),
             state_path: env::var("STATE_PATH").unwrap_or_else(|_| "paper_state.json".into()),

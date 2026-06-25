@@ -37,15 +37,22 @@ async function refresh() {
     $("mid").textContent = fmt(s.up_mid, 3);
     $("quotes").textContent = `${fmt(s.up_bid, 2)} / ${fmt(s.up_ask, 2)}`;
     $("band").innerHTML = s.in_band ? '<span class="ok">oui ✓</span>' : '<span class="ko">non ✗</span>';
+    const st = s.paused ? '<span class="ko">KILL ⏸</span>' : '<span class="ok">cotation</span>';
+    $("execstate").innerHTML = st;
+    $("block").textContent = s.last_block_reason || "—";
     $("signals").textContent = s.signals_received ?? 0;
 
-    // PnL
+    // Bankroll & PnL
+    $("equity").textContent = fmt(s.equity, 2);
     $("cash").textContent = fmt(s.cash, 2);
-    $("upbal").textContent = fmt(s.up_bal, 0);
-    $("dnbal").textContent = fmt(s.down_bal, 0);
-    signed($("latent"), s.latent, 2);
+    $("posval").textContent = fmt(s.position_value, 2);
+    signed($("net"), s.net_exposure, 0);
+    signed($("wpnl"), s.window_pnl, 2);
+    $("dd").textContent = fmt(s.drawdown, 2);
     signed($("realized"), s.realized_pnl, 2);
-    $("fm").textContent = `${s.fills ?? 0} / ${s.merges ?? 0}`;
+    $("updn").textContent = `${fmt(s.up_bal, 0)} / ${fmt(s.down_bal, 0)}`;
+    $("mtfills").textContent = `${s.maker_fills ?? 0} / ${s.taker_fills ?? 0}`;
+    $("sm").textContent = `${s.sells ?? 0} / ${s.merges ?? 0}`;
 
     renderBook(s);
   } catch (e) {

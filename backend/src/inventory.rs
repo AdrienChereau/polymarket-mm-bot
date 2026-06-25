@@ -21,6 +21,12 @@ pub struct PaperState {
     pub down_balance: f64,
     pub realized_pnl: f64,
     pub fills: u64,
+    #[serde(default)]
+    pub sells: u64,
+    #[serde(default)]
+    pub maker_fills: u64,
+    #[serde(default)]
+    pub taker_fills: u64,
     pub merges: u64,
     pub markets_resolved: u64,
 }
@@ -35,7 +41,7 @@ pub fn estimate_merge_gas_usdc() -> f64 {
 pub struct PaperEngine {
     pub state: PaperState,
     start_cash: f64,
-    our_size: f64,
+    max_position: f64,
     min_merge_threshold: f64,
     safety_mult: f64,
     state_path: String,
@@ -47,6 +53,7 @@ struct TradeRecord<'a> {
     ts: String,
     kind: &'a str,
     side: &'a str,
+    liquidity_type: &'a str,
     price: f64,
     size: f64,
     cash_after: f64,
@@ -55,7 +62,7 @@ struct TradeRecord<'a> {
 impl PaperEngine {
     pub fn load_or_init(
         start_cash: f64,
-        our_size: f64,
+        max_position: f64,
         min_merge_threshold: f64,
         safety_mult: f64,
         state_path: String,
@@ -75,7 +82,7 @@ impl PaperEngine {
         Self {
             state,
             start_cash,
-            our_size,
+            max_position,
             min_merge_threshold,
             safety_mult,
             state_path,
@@ -83,25 +90,51 @@ impl PaperEngine {
         }
     }
 
-    /// Simule un fill d'achat sur un token si notre bid croise le meilleur ask.
-    /// `best_ask` = meilleur ask du carnet du token, `our_bid` = notre quote.
-    /// Retourne true si exécuté.
-    pub fn try_buy(&mut self, side: &str, our_bid: f64, best_ask: Option<f64>) -> bool {
-        let Some(ask) = best_ask else { return false };
-        if our_bid < ask {
-            return false; // pas de croisement
+    fn side_balance(&self, side: &str) -> f64 {
+        if side == "up" { self.state.up_balance } else { self.state.down_balance }
+    }
+
+    /// Applique un ACHAT de `size` tokens à `price` (R3 : taille et prix décidés en
+    /// amont par execution.rs/bankroll). Vérifie cash et plafond de position.
+    pub fn try_buy(&mut self, side: &str, price: f64, size: f64, liquidity_type: &str) -> bool {
+        if size <= 0.0 {
+            return false;
         }
-        let cost = self.our_size * ask;
+        let cost = size * price;
         if self.state.cash_usdc < cost {
-            return false; // pas assez de cash
+            return false;
+        }
+        if self.side_balance(side) + size > self.max_position {
+            return false; // hard-limit position
         }
         self.state.cash_usdc -= cost;
         match side {
-            "up" => self.state.up_balance += self.our_size,
-            _ => self.state.down_balance += self.our_size,
+            "up" => self.state.up_balance += size,
+            _ => self.state.down_balance += size,
         }
         self.state.fills += 1;
-        self.append_trade("buy", side, ask, self.our_size);
+        if liquidity_type == "maker" { self.state.maker_fills += 1 } else { self.state.taker_fills += 1 }
+        self.append_trade("buy", side, liquidity_type, price, size);
+        true
+    }
+
+    /// Applique une VENTE de `size` tokens à `price`. Pas de vente à découvert :
+    /// on ne vend que ce qu'on détient.
+    pub fn try_sell(&mut self, side: &str, price: f64, size: f64, liquidity_type: &str) -> bool {
+        let held = self.side_balance(side);
+        let qty = size.min(held);
+        if qty <= 0.0 {
+            return false;
+        }
+        self.state.cash_usdc += qty * price;
+        match side {
+            "up" => self.state.up_balance -= qty,
+            _ => self.state.down_balance -= qty,
+        }
+        self.state.fills += 1;
+        self.state.sells += 1;
+        if liquidity_type == "maker" { self.state.maker_fills += 1 } else { self.state.taker_fills += 1 }
+        self.append_trade("sell", side, liquidity_type, price, qty);
         true
     }
 
@@ -128,7 +161,7 @@ impl PaperEngine {
         self.state.down_balance -= mergeable;
         self.state.cash_usdc += mergeable; // 1 USDC par paire détruite
         self.state.merges += 1;
-        self.append_trade("merge", "ctf", 1.0, mergeable);
+        self.append_trade("merge", "ctf", "n/a", 1.0, mergeable);
         tracing::info!(
             merged = mergeable, cash = self.state.cash_usdc,
             "[CTF] Fusion — collatéral libéré"
@@ -146,7 +179,7 @@ impl PaperEngine {
         // Coût de base déjà déduit du cash à l'achat → le payout est du cash brut.
         self.state.cash_usdc += payout;
         self.state.realized_pnl = self.state.cash_usdc - self.start_cash;
-        self.append_trade("resolve", if up_won { "up" } else { "down" }, 1.0, payout);
+        self.append_trade("resolve", if up_won { "up" } else { "down" }, "n/a", 1.0, payout);
         self.state.up_balance = 0.0;
         self.state.down_balance = 0.0;
         self.state.markets_resolved += 1;
@@ -174,11 +207,12 @@ impl PaperEngine {
         }
     }
 
-    fn append_trade(&self, kind: &str, side: &str, price: f64, size: f64) {
+    fn append_trade(&self, kind: &str, side: &str, liquidity_type: &str, price: f64, size: f64) {
         let rec = TradeRecord {
             ts: chrono::Utc::now().to_rfc3339(),
             kind,
             side,
+            liquidity_type,
             price,
             size,
             cash_after: self.state.cash_usdc,
@@ -202,7 +236,7 @@ mod tests {
     fn engine() -> PaperEngine {
         PaperEngine::load_or_init(
             100.0,
-            50.0,
+            1000.0, // max_position
             5.0,
             3.0,
             "/tmp/test_state_nonexistent.json".into(),
@@ -211,18 +245,49 @@ mod tests {
     }
 
     #[test]
-    fn buy_fills_when_crossing() {
+    fn buy_applies_cost_and_balance() {
         let mut e = engine();
         e.state.cash_usdc = 100.0;
-        assert!(e.try_buy("up", 0.30, Some(0.25))); // bid 0.30 >= ask 0.25
+        assert!(e.try_buy("up", 0.25, 50.0, "maker"));
         assert_eq!(e.state.up_balance, 50.0);
         assert!((e.state.cash_usdc - (100.0 - 50.0 * 0.25)).abs() < 1e-9);
+        assert_eq!(e.state.maker_fills, 1);
     }
 
     #[test]
-    fn no_fill_without_crossing() {
+    fn buy_blocked_when_insufficient_cash() {
         let mut e = engine();
-        assert!(!e.try_buy("up", 0.20, Some(0.25)));
+        e.state.cash_usdc = 5.0;
+        assert!(!e.try_buy("up", 0.50, 50.0, "maker")); // coût 25 > cash 5
+        assert_eq!(e.state.up_balance, 0.0);
+    }
+
+    #[test]
+    fn buy_blocked_at_max_position() {
+        let mut e = PaperEngine::load_or_init(
+            1000.0, 60.0, 5.0, 3.0,
+            "/tmp/t_s.json".into(), "/tmp/t_t.jsonl".into(),
+        );
+        e.state.up_balance = 40.0;
+        assert!(!e.try_buy("up", 0.10, 50.0, "maker")); // 40+50 > 60
+    }
+
+    #[test]
+    fn sell_reduces_balance_increases_cash() {
+        let mut e = engine();
+        e.state.up_balance = 40.0;
+        e.state.cash_usdc = 10.0;
+        assert!(e.try_sell("up", 0.60, 30.0, "maker"));
+        assert_eq!(e.state.up_balance, 10.0);
+        assert!((e.state.cash_usdc - (10.0 + 30.0 * 0.60)).abs() < 1e-9);
+        assert_eq!(e.state.sells, 1);
+    }
+
+    #[test]
+    fn no_short_selling() {
+        let mut e = engine();
+        e.state.up_balance = 0.0;
+        assert!(!e.try_sell("up", 0.60, 30.0, "maker"));
         assert_eq!(e.state.up_balance, 0.0);
     }
 

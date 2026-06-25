@@ -8,12 +8,14 @@ use std::time::Duration;
 
 use tokio::sync::watch;
 
+use crate::bankroll::BankrollEngine;
 use crate::config::Config;
 use crate::connectors::binance;
 use crate::connectors::polymarket::{Market, PolymarketClient};
 use crate::dashboard::Shared;
 use crate::engines::risk::{compute_quote, QuoteInputs};
 use crate::engines::{pricing, volatility::VolatilityEngine};
+use crate::execution::{ExecutionEngine, KillState, PostedQuotes};
 use crate::inventory::PaperEngine;
 use crate::signal::SignalTransport;
 use crate::types::BookUpdate;
@@ -26,15 +28,23 @@ pub async fn run(cfg: Config, transport: Arc<dyn SignalTransport>, dash: Shared)
         "Nœud Exécuteur démarré"
     );
 
-    // Écoute des signaux radar (en parallèle).
+    // État KILL partagé (R5) entre la task signal et la boucle de cotation.
+    let kill = Arc::new(KillState::new());
+
+    // Écoute des signaux radar (en parallèle) — arme la pause sur KILL.
     {
         let dash = dash.clone();
+        let kill = kill.clone();
+        let cooldown_ms = cfg.kill_pause_secs * 1000;
         tokio::spawn(async move {
             loop {
                 match transport.recv_signal().await {
                     Ok(sig) => {
-                        tracing::warn!(?sig, "⚡ Signal reçu du Radar — retrait des quotes (anti-toxicité)");
-                        dash.write().await.signals_received += 1;
+                        kill.trigger(cooldown_ms);
+                        tracing::warn!(?sig, "⚡ KILL — retrait des quotes + pause des fills");
+                        let mut d = dash.write().await;
+                        d.signals_received += 1;
+                        d.paused = true;
                     }
                     Err(e) => {
                         tracing::error!(error = %e, "réception signal");
@@ -73,7 +83,7 @@ pub async fn run(cfg: Config, transport: Arc<dyn SignalTransport>, dash: Shared)
         });
     }
 
-    quote_loop(cfg, spot_rx, sigma_rx, dash).await
+    quote_loop(cfg, spot_rx, sigma_rx, dash, kill).await
 }
 
 async fn quote_loop(
@@ -81,16 +91,24 @@ async fn quote_loop(
     spot_rx: watch::Receiver<Option<BookUpdate>>,
     sigma_rx: watch::Receiver<f64>,
     dash: Shared,
+    kill: Arc<KillState>,
 ) -> anyhow::Result<()> {
     let client = PolymarketClient::new();
+    let bankroll = {
+        // placeholder, recréé juste après avec equity initiale
+        BankrollEngine::new(&cfg)
+    };
+    let mut bankroll = bankroll;
+    let mut execution = ExecutionEngine::new(cfg.maker_fill_prob);
     let mut paper = PaperEngine::load_or_init(
-        cfg.start_cash, cfg.our_size, cfg.min_merge_threshold, cfg.safety_mult,
+        cfg.start_cash, cfg.max_position, cfg.min_merge_threshold, cfg.safety_mult,
         cfg.state_path.clone(), cfg.trades_path.clone(),
     );
 
     let mut current: Option<Market> = None;
     let mut strike: Option<f64> = None;
     let mut last_spot: Option<f64> = None;
+    let mut last_window_slug: Option<String> = None;
     let mut poll = tokio::time::interval(Duration::from_secs(1));
     let mut persist_ctr: u32 = 0;
 
@@ -158,19 +176,46 @@ async fn quote_loop(
         };
         let (Some(up_mid), Some(down_mid)) = (up_book.mid(), down_book.mid()) else { continue };
 
-        // Quote + fill simulé sur chaque côté.
-        let q_up = compute_quote(&quote_inputs(&cfg, m, fair_up, up_mid, sigma, t_years, paper.state.up_balance), &up_book);
-        let q_dn = compute_quote(&quote_inputs(&cfg, m, 1.0 - fair_up, down_mid, sigma, t_years, paper.state.down_balance), &down_book);
-        paper.try_buy("up", q_up.bid, up_book.best_ask());
-        paper.try_buy("down", q_dn.bid, down_book.best_ask());
+        // Inventaire NET (R1) + equity/bankroll (R4).
+        let net = paper.state.up_balance - paper.state.down_balance;
+        let equity = BankrollEngine::equity(&paper.state, up_mid, down_mid);
+        bankroll.observe(equity);
+        if last_window_slug.as_deref() != Some(m.slug.as_str()) {
+            bankroll.on_window_start(equity);
+            last_window_slug = Some(m.slug.clone());
+        }
 
-        // Fusion CTF (vélocité du capital) — rendement attendu proxy via reward.
+        // Quotes A-S sur l'inventaire NET (Up : +net ; Down : −net).
+        let q_up = compute_quote(&quote_inputs(&cfg, m, fair_up, up_mid, sigma, t_years, net), &up_book);
+        let q_dn = compute_quote(&quote_inputs(&cfg, m, 1.0 - fair_up, down_mid, sigma, t_years, -net), &down_book);
+
+        // Gating : pause KILL (R5) ou Panic Stop T-30 → ni fills ni nouvelles quotes.
+        let paused = kill.is_paused();
+        let panic = m.time_remaining_sec() <= cfg.panic_stop_secs;
+        let mut fill_report = crate::execution::FillReport::default();
+        if !paused && !panic {
+            // Tick N+1 : fills maker contre les quotes postées au tick précédent.
+            fill_report = execution.simulate_maker_fills(
+                &mut paper, &bankroll, &up_book, &down_book,
+                up_mid, down_mid, m, m.time_remaining_sec(),
+            );
+            // Tick N : poster les quotes pour le tick suivant.
+            execution.post_quotes(PostedQuotes {
+                up_bid: q_up.bid, up_ask: q_up.ask, dn_bid: q_dn.bid, dn_ask: q_dn.ask,
+            });
+        } else {
+            execution.clear_quotes();
+        }
+
+        // Fusion CTF inventaire (R6) — règle séparée des gates d'achat.
         let yield_per_usdc = (q_up.expected_reward + q_dn.expected_reward).max(0.1);
         paper.check_and_merge(yield_per_usdc);
 
-        let latent = paper.mark_to_market(up_mid, down_mid);
+        let position_value = BankrollEngine::position_value(&paper.state, up_mid, down_mid);
+        let window_pnl = bankroll.window_pnl(equity);
+        let drawdown = bankroll.drawdown_from_peak(equity);
 
-        // Mise à jour du dashboard (état exécuteur + PnL).
+        // Mise à jour du dashboard (état exécuteur + bankroll).
         {
             let mut d = dash.write().await;
             d.market_slug = m.slug.clone();
@@ -184,10 +229,22 @@ async fn quote_loop(
             d.cash = paper.state.cash_usdc;
             d.up_bal = paper.state.up_balance;
             d.down_bal = paper.state.down_balance;
-            d.latent = latent;
             d.realized_pnl = paper.state.realized_pnl;
             d.fills = paper.state.fills;
             d.merges = paper.state.merges;
+            d.latent = position_value;
+            d.equity = equity;
+            d.position_value = position_value;
+            d.window_pnl = window_pnl;
+            d.drawdown = drawdown;
+            d.net_exposure = net;
+            d.paused = paused;
+            d.sells = paper.state.sells;
+            d.maker_fills = paper.state.maker_fills;
+            d.taker_fills = paper.state.taker_fills;
+            if let Some(r) = fill_report.last_block {
+                d.last_block_reason = format!("{r:?}");
+            }
             // Carnet Up : 6 meilleurs niveaux de chaque côté pour visualisation.
             let mut bids = up_book.bids.clone();
             bids.sort_by(|a, b| b.price.partial_cmp(&a.price).unwrap());
@@ -203,12 +260,12 @@ async fn quote_loop(
             rem_s = m.time_remaining_sec(),
             fair = format!("{:.3}", fair_up),
             up_mid = format!("{:.3}", up_mid),
-            up_bid = format!("{:.2}", q_up.bid), up_ask = format!("{:.2}", q_up.ask),
-            cash = format!("{:.2}", paper.state.cash_usdc),
-            up_bal = format!("{:.0}", paper.state.up_balance),
-            dn_bal = format!("{:.0}", paper.state.down_balance),
-            fills = paper.state.fills, merges = paper.state.merges,
-            latent = format!("{:.2}", latent),
+            q = format!("{:.2}/{:.2}", q_up.bid, q_up.ask),
+            equity = format!("{:.2}", equity),
+            net = format!("{:.0}", net),
+            wpnl = format!("{:.2}", window_pnl),
+            fills = paper.state.fills, sells = paper.state.sells, merges = paper.state.merges,
+            state = if paused { "KILL" } else if panic { "PANIC" } else { "quote" },
             "paper"
         );
 
@@ -225,7 +282,9 @@ fn quote_inputs(
 ) -> QuoteInputs {
     QuoteInputs {
         fair, mid, sigma, t_years, inventory,
-        gamma: cfg.gamma, kappa: cfg.kappa, tick: m.tick_size,
+        gamma: cfg.gamma, kappa: cfg.kappa,
+        base_half_spread_cents: cfg.base_half_spread_cents,
+        tick: m.tick_size,
         rewards_max_spread_cents: m.rewards_max_spread,
         our_size: cfg.our_size,
         reward_pool_per_min: cfg.reward_pool_per_min,

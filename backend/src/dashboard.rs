@@ -45,6 +45,17 @@ pub struct DashboardState {
     pub realized_pnl: f64,
     pub fills: u64,
     pub merges: u64,
+    // Bankroll / risque (R4)
+    pub equity: f64,
+    pub position_value: f64,
+    pub window_pnl: f64,
+    pub drawdown: f64,
+    pub net_exposure: f64,
+    pub paused: bool,
+    pub last_block_reason: String,
+    pub sells: u64,
+    pub maker_fills: u64,
+    pub taker_fills: u64,
     // Carnet Up (quelques niveaux autour du mid) pour visualisation.
     pub book_bids: Vec<BookLevel>, // tri décroissant (meilleur en premier)
     pub book_asks: Vec<BookLevel>, // tri croissant
