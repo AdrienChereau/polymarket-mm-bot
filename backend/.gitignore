@@ -1,0 +1,4 @@
+/target
+.env
+*.json.prev
+*.before_restart_*.json

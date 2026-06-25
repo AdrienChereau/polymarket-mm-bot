@@ -1,0 +1,18 @@
+# Rust build
+/backend/target
+
+# Données runtime (état paper, logs, trades) — ne jamais publier
+/backend/data
+*.log
+*.jsonl
+*.json.prev
+*.before_restart_*.json
+paper_state.json
+paper_trades.jsonl
+
+# Secrets — ne JAMAIS committer
+.env
+**/.env
+
+# OS
+.DS_Store

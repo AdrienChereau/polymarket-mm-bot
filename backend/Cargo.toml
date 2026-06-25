@@ -1,0 +1,39 @@
+[package]
+name = "polymarket_mm_bot"
+version = "0.3.0"
+edition = "2021"
+authors = ["Quantitative Trading Team"]
+
+[dependencies]
+# Asynchronisme & Runtime
+tokio = { version = "1.38", features = ["full"] }
+tokio-tungstenite = { version = "0.23", features = ["native-tls"] }
+futures-util = "0.3"
+async-trait = "0.1"
+
+# Sérialisation & Réseau
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+reqwest = { version = "0.12", features = ["json", "native-tls"] }
+
+# Mathématiques & Algorithmes
+num-traits = "0.2"
+statrs = "0.16" # Fonction d'erreur (erf) / distribution normale cumulative
+
+# Utilitaires, Logs & Configuration
+anyhow = "1.0"
+thiserror = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dotenvy = "0.15"
+chrono = { version = "0.4", features = ["serde"] }
+
+# Cryptographie EVM & Signatures — activé au Jalon 11 (signer.rs).
+# Méta-crate alloy unifiée ; version à épingler au moment du J11.
+# alloy = { version = "0.8", features = ["providers", "signers", "signer-local", "sol-types", "rpc-types-eth"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"

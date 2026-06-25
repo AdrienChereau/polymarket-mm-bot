@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Polymarket MM — Monitoring</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <h1>Polymarket MM Bot <span id="dry" class="badge">—</span></h1>
+    <span id="clock" class="muted"></span>
+  </header>
+
+  <section class="grid">
+    <div class="card" id="card-radar">
+      <h2>🧠 Radar (Tokyo)</h2>
+      <div class="row"><span>Binance</span><b id="binance">—</b></div>
+      <div class="row"><span>BTC micro-price</span><b id="micro">—</b></div>
+      <div class="row"><span>OBI</span><b id="obi">—</b></div>
+      <div class="row"><span>KILL émis</span><b id="kills">—</b></div>
+    </div>
+
+    <div class="card" id="card-exec">
+      <h2>🔫 Exécuteur (Dublin)</h2>
+      <div class="row"><span>Marché</span><b id="slug">—</b></div>
+      <div class="row"><span>Temps restant</span><b id="rem">—</b></div>
+      <div class="row"><span>σ (annualisé)</span><b id="sigma">—</b></div>
+      <div class="row"><span>Fair (Up)</span><b id="fair">—</b></div>
+      <div class="row"><span>Mid (Up)</span><b id="mid">—</b></div>
+      <div class="row"><span>Nos quotes</span><b id="quotes">—</b></div>
+      <div class="row"><span>Bande reward</span><b id="band">—</b></div>
+      <div class="row"><span>Signaux reçus</span><b id="signals">—</b></div>
+    </div>
+
+    <div class="card" id="card-book">
+      <h2>📖 Carnet Up + nos ordres</h2>
+      <div id="book" class="book"><div class="muted">en attente…</div></div>
+      <div class="book-legend">
+        <span><i class="dot-bid"></i> bids</span>
+        <span><i class="dot-ask"></i> asks</span>
+        <span><i class="dot-mine"></i> nos quotes</span>
+      </div>
+    </div>
+
+    <div class="card" id="card-pnl">
+      <h2>💰 Inventaire & PnL (paper)</h2>
+      <div class="row"><span>Cash USDC</span><b id="cash">—</b></div>
+      <div class="row"><span>Balance Up</span><b id="upbal">—</b></div>
+      <div class="row"><span>Balance Down</span><b id="dnbal">—</b></div>
+      <div class="row"><span>PnL latent</span><b id="latent">—</b></div>
+      <div class="row"><span>PnL réalisé</span><b id="realized">—</b></div>
+      <div class="row"><span>Fills / Fusions</span><b id="fm">—</b></div>
+    </div>
+  </section>
+
+  <footer class="muted">Connexion : <span id="status">…</span> · maj <span id="age">—</span></footer>
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+[Unit]
+Description=Polymarket HFT Market Making Engine (Distributed Rust)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/polymarket-monolith/backend
+ExecStart=/opt/polymarket-monolith/backend/target/release/polymarket_mm_bot
+Restart=always
+RestartSec=1
+
+# Rôle déterminé par la région (ap-northeast-1=radar, eu-west-1=executor)
+# ou forcé via BOT_ROLE. DRY_RUN=true tant qu'on n'a pas validé le signing (J11).
+Environment=RUST_LOG=info
+Environment=AWS_REGION=eu-west-1
+Environment=DRY_RUN=true
+Environment=VOLATILITY_FLOOR=0.40
+Environment=PORT=8767
+# Transport du signal KILL (prod : UDP via Global Accelerator)
+Environment=USE_UDP_TRANSPORT=true
+Environment=SIGNAL_ADDR=0.0.0.0:9001
+# Sur le nœud radar, définir aussi : SIGNAL_TARGET=<ip_executeur>:9001
+# Chemins d'état persistant
+Environment=STATE_PATH=/opt/polymarket-monolith/backend/data/paper_state.json
+Environment=TRADES_PATH=/opt/polymarket-monolith/backend/data/paper_trades.jsonl
+
+[Install]
+WantedBy=multi-user.target

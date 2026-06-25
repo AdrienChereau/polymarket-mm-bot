@@ -1,0 +1,45 @@
+:root {
+  --bg: #0d1117; --card: #161b22; --line: #30363d;
+  --txt: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+  --green: #3fb950; --red: #f85149; --amber: #d29922;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 1.2rem; background: var(--bg); color: var(--txt);
+  font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 1rem; }
+h1 { font-size: 1.2rem; margin: 0; }
+h2 { font-size: 0.95rem; margin: 0 0 0.6rem; color: var(--accent); }
+.badge {
+  font-size: 0.7rem; padding: 0.1rem 0.5rem; border-radius: 1rem;
+  background: var(--amber); color: #000; vertical-align: middle;
+}
+.badge.live { background: var(--red); color: #fff; }
+.badge.paper { background: var(--green); color: #000; }
+.grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 0.6rem; padding: 1rem; }
+.row { display: flex; justify-content: space-between; padding: 0.25rem 0; border-bottom: 1px dashed var(--line); }
+.row:last-child { border-bottom: none; }
+.row span { color: var(--muted); }
+.row b { font-variant-numeric: tabular-nums; }
+.pos { color: var(--green); } .neg { color: var(--red); }
+.muted { color: var(--muted); font-size: 0.8rem; }
+
+/* Carnet d'ordres */
+.book { display: flex; flex-direction: column; gap: 2px; }
+.lvl { position: relative; display: flex; justify-content: space-between; padding: 2px 6px; font-size: 0.8rem; border-radius: 3px; overflow: hidden; }
+.lvl .bar { position: absolute; top: 0; bottom: 0; right: 0; opacity: 0.18; }
+.lvl.ask .bar { background: var(--red); }
+.lvl.bid .bar { background: var(--green); }
+.lvl .px, .lvl .sz { position: relative; z-index: 1; font-variant-numeric: tabular-nums; }
+.lvl.ask .px { color: var(--red); }
+.lvl.bid .px { color: var(--green); }
+.lvl.mine { outline: 1px solid var(--accent); background: rgba(88,166,255,0.12); }
+.lvl .tag { position: relative; z-index: 1; color: var(--accent); font-size: 0.7rem; }
+.spread-row { text-align: center; color: var(--muted); font-size: 0.75rem; padding: 3px 0; border-top: 1px dashed var(--line); border-bottom: 1px dashed var(--line); margin: 2px 0; }
+.book-legend { display: flex; gap: 1rem; margin-top: 0.5rem; font-size: 0.7rem; color: var(--muted); }
+.book-legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; vertical-align: middle; margin-right: 3px; }
+.dot-bid { background: var(--green); } .dot-ask { background: var(--red); } .dot-mine { background: var(--accent); }
+footer { margin-top: 1rem; }
+.ok { color: var(--green); } .ko { color: var(--red); }
